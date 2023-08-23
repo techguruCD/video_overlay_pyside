@@ -1,279 +1,224 @@
 import sys
 import cv2
-from PySide6.QtCore import QTimer, Qt, QSize
-from PySide6.QtGui import QImage, QPixmap, QFont, QIcon
+from PySide6.QtCore import QSize
+from PySide6.QtGui import QAction, QActionGroup
 from PySide6.QtWidgets import (
     QApplication,
     QWidget,
+    QMenu,
+    QGroupBox,
+    QCheckBox,
     QVBoxLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
+    QToolButton,
     QSpacerItem,
     QSizePolicy
 )
 
-# Control Variables
-camera_count = 2
-camera_views = [0] * camera_count
-
-# Editable Variables
-mode = 'camera'
-measure_idx = 0
+from CameraViewWidget import CameraViewWidget
+from globals import cameraIndexes
 
 
-
-def show_one_camera(param):
-    global measure_idx
-    for idx in range(camera_count):
-        camera_views[idx].hide()
-    for idx in range(camera_count):
-        if idx == measure_idx or param < 0:
-            camera_views[idx].show()
-
-# Camera View
-class CameraViewWidget(QWidget):
-    def __init__(self, camera_index):
-        super().__init__()
-
-        self.camera_index = camera_index
-
-        self.video_capture = cv2.VideoCapture(camera_index)
-        self.video_capture_available = self.video_capture.isOpened()
-        self.video_timer = QTimer(self)
-        self.video_timer.timeout.connect(self.update_frame)
-        self.video_timer.start(30)
-
-        self.image_label = QLabel(self)
-        self.image_label.setScaledContents(True)
-
-        layout = QVBoxLayout()
-        layout.addWidget(self.image_label)
-        self.setLayout(layout)
-
-    def update_frame(self):
-        ret, frame = self.video_capture.read()
-        if ret:
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            height, width, channel = frame_rgb.shape
-            bytes_per_line = 3 * width
-            qt_image = QImage(frame_rgb.data, width, height, bytes_per_line, QImage.Format_RGB888)
-            self.image_label.setPixmap(QPixmap.fromImage(qt_image))
-        else :
-            self.image_label.setText(f'Camera{self.camera_index + 1}')
-
-    def closeEvent(self, event):
-        self.video_capture.release()
-
-class CameraGroupWidget(QWidget):
+class MainWiget(QWidget):
     def __init__(self):
         super().__init__()
-        self.camera_layout = QHBoxLayout()        
-        for idx in range(camera_count):
-            camera_views[idx] = CameraViewWidget(idx)
-            self.camera_layout.addWidget(camera_views[idx])
-        self.setLayout(self.camera_layout)
-        icon = QIcon("next.png")
-        self.next_btn = QPushButton('', self)
-        self.next_btn.setFixedSize(80, 80)
-        self.next_btn.setIcon(icon)
-        icon_size = QSize(80, 80)
-        self.next_btn.setFlat(True)
-        self.next_btn.setStyleSheet("QPushButton:pressed { background-color: none; }")
-        self.next_btn.setIconSize(icon_size)
-        self.next_btn.clicked.connect(self.on_nextbtn_click)
 
-    def resizeEvent(self, event):
-        new_width = event.size().width()
-        new_height = event.size().height()
-        self.next_btn.move(new_width-100, 20)
-     
-    def on_nextbtn_click(self):
-        global measure_idx
-        measure_idx = 0 if measure_idx == camera_count - 1 else measure_idx + 1
-        show_one_camera(measure_idx)
+        self.controlGroupBox = QGroupBox('', self)
+        self.controlGroupBox.setMinimumSize(QSize(300, 0))
+        self.controlGroupBox.layout = QVBoxLayout(self.controlGroupBox)
+        self.controlGroupBox.layout.setSpacing(15)
+        self.controlGroupBox.layout.setContentsMargins(5, 5, 5, 5)
 
-class MainWidget(QWidget):
-    def __init__(self):
-        super().__init__()
-        self.init_ui()
-        self.display_measurement()
+        self.controlGroupBox.verticalSpacer = QSpacerItem(
+            20, 40, QSizePolicy.Minimum, QSizePolicy.Expanding)
+        self.controlGroupBox.layout.addItem(
+            self.controlGroupBox.verticalSpacer)
 
-    def init_ui(self):
-        self.setWindowTitle('Camera Viewer')
-        self.setGeometry(100, 100, 400, 300)
+        self.cameraInputGroup = QGroupBox('Camera Input', self)
+        self.cameraInputGroup.layout = QHBoxLayout(self.cameraInputGroup)
+        self.cameraInputGroup.inputBtn = QToolButton(text='Select Camera')
+        self.cameraInputGroup.layout.addWidget(self.cameraInputGroup.inputBtn)
+        self.controlGroupBox.layout.addWidget(self.cameraInputGroup)
 
-        self.view_layout = QVBoxLayout()
+        self.menuGroup = QActionGroup(self)
+        self.cameraMenu = QMenu()
+        self.cameraActions = []
+        for index, cameraIndex in enumerate(cameraIndexes) :
+            cameraAction = QAction(f"Camera {cameraIndex}", self)
+            cameraAction.setCheckable(True)
+            cameraAction.index = cameraIndex
+            self.cameraMenu.addAction(cameraAction)
+            self.cameraActions.append(cameraAction)
+            self.menuGroup.addAction(cameraAction)
+            cameraAction.triggered.connect(self.cameraMenuTriggered)
 
-        # Title Layout
-        self.title_layout = QHBoxLayout()
-        self.title_label = QLabel('Camera View')
-        font_title = QFont('Arial', 24, QFont.Bold)
-        self.title_label.setFont(font_title)
-        self.title_label.setAlignment(Qt.AlignCenter)
-        self.title_layout.addWidget(self.title_label)
+        self.cameraInputGroup.inputBtn.setPopupMode(QToolButton.InstantPopup)
+        self.cameraInputGroup.inputBtn.setMenu(self.cameraMenu)
 
-        self.camera_widget = CameraGroupWidget()
+        self.verticalLineGroup = QGroupBox('Vertical Line', self)
+        self.verticalLineGroup.layout = QVBoxLayout(self.verticalLineGroup)
+        self.verticalLineGroup.checkBox = QCheckBox(
+            'Enable', self.verticalLineGroup)
+        self.verticalLineGroup.layout.addWidget(
+            self.verticalLineGroup.checkBox)
 
-        # Form Layout
-        self.form_layout = QHBoxLayout()
-        form_label_layout = QVBoxLayout()
-        form_input_layout = QVBoxLayout()
+        self.verticalLineGroup.locationLayout = QHBoxLayout()
+        self.verticalLineGroup.xLabel = QLabel('X Location')
+        self.verticalLineGroup.xEdit = QLineEdit('100', self.verticalLineGroup)
 
-        font_input_labels = QFont('Arial', 16)
+        self.verticalLineGroup.locationLayout.addWidget(
+            self.verticalLineGroup.xLabel)
+        self.verticalLineGroup.locationLayout.addWidget(
+            self.verticalLineGroup.xEdit)
 
-        self.first_widget = QWidget()
+        self.verticalLineGroup.layout.addLayout(
+            self.verticalLineGroup.locationLayout)
+        self.controlGroupBox.layout.addWidget(self.verticalLineGroup)
 
-        labels = ['Square Size:', 'Width:', 'Height:']
-        inputs = [QLineEdit('') for _ in range(3)]
+        self.horinzontalLineGroup = QGroupBox('Horizontal Line', self)
+        self.horinzontalLineGroup.layout = QVBoxLayout(
+            self.horinzontalLineGroup)
+        self.horinzontalLineGroup.checkBox = QCheckBox(
+            'Enable', self.horinzontalLineGroup)
+        self.horinzontalLineGroup.layout.addWidget(
+            self.horinzontalLineGroup.checkBox)
 
-        for idx, label_text in enumerate(labels):
-            label = QLabel(label_text)
-            label.setFont(font_input_labels)
-            form_label_layout.addWidget(label)
+        self.horinzontalLineGroup.locationLayout = QHBoxLayout()
+        self.horinzontalLineGroup.yLabel = QLabel('Y Location')
+        self.horinzontalLineGroup.yEdit = QLineEdit('100', self.horinzontalLineGroup)
 
-            input_field = inputs[idx]
-            input_field.setFont(font_input_labels)
-            form_input_layout.addWidget(input_field)
+        self.horinzontalLineGroup.locationLayout.addWidget(
+            self.horinzontalLineGroup.yLabel)
+        self.horinzontalLineGroup.locationLayout.addWidget(
+            self.horinzontalLineGroup.yEdit)
 
-        self.form_layout.addLayout(form_label_layout)
-        self.form_layout.addLayout(form_input_layout)
-        self.form_layout.setContentsMargins(20, 20, 50, 20)
-        self.form_layout.insertSpacing(1, 30)
+        self.horinzontalLineGroup.layout.addLayout(
+            self.horinzontalLineGroup.locationLayout)
+        self.controlGroupBox.layout.addWidget(self.horinzontalLineGroup)
 
-        # Info Layout
-        self.info_layout = QHBoxLayout()
-        info_label_layout = QVBoxLayout()
-        info_value_layout = QVBoxLayout()
-        info_top_spacer = QSpacerItem(1, 40, QSizePolicy.Minimum, QSizePolicy.Expanding)
-        info_middle_spacer = QSpacerItem(1, 40, QSizePolicy.Minimum, QSizePolicy.Expanding)
-        info_bottom_spacer = QSpacerItem(1, 40, QSizePolicy.Minimum, QSizePolicy.Expanding)
+        self.crossHairGroup = QGroupBox('Cross Hair', self)
+        self.crossHairGroup.layout = QVBoxLayout(self.crossHairGroup)
+        self.crossHairGroup.checkBox = QCheckBox('Enable', self.crossHairGroup)
+        self.crossHairGroup.layout.addWidget(self.crossHairGroup.checkBox)
 
-        font_input_labels = QFont('Arial', 16)
+        self.crossHairGroup.xLayout = QHBoxLayout()
 
-        labels = ['Width:', 'Height:', 'Length:']
-        self.value_labels = [QLabel('asdf') for _ in range(3)]
+        self.crossHairGroup.xLabel = QLabel('X Location')
+        self.crossHairGroup.xEdit = QLineEdit('300', self.crossHairGroup)
+        self.crossHairGroup.xLayout.addWidget(self.crossHairGroup.xLabel)
+        self.crossHairGroup.xLayout.addWidget(self.crossHairGroup.xEdit)
 
-        for idx, label_text in enumerate(labels):
-            label = QLabel(label_text)
-            label.setFont(font_input_labels)
-            info_label_layout.addWidget(label)
+        self.crossHairGroup.yLayout = QHBoxLayout()
 
-            value_label = self.value_labels[idx]
-            value_label.setFont(font_input_labels)
-            info_value_layout.addWidget(value_label)
+        self.crossHairGroup.yLabel = QLabel('Y Location')
+        self.crossHairGroup.yEdit = QLineEdit('300', self.crossHairGroup)
+        self.crossHairGroup.yLayout.addWidget(self.crossHairGroup.yLabel)
+        self.crossHairGroup.yLayout.addWidget(self.crossHairGroup.yEdit)
 
-        self.info_layout.addLayout(info_label_layout)
-        self.info_layout.addLayout(info_value_layout)
+        self.crossHairGroup.layout.addLayout(self.crossHairGroup.xLayout)
+        self.crossHairGroup.layout.addLayout(self.crossHairGroup.yLayout)
 
-        # Save Button Widget
-        save_layout = QHBoxLayout()
-        save_button = QPushButton('Save')
-        save_button.setStyleSheet('''
-            QPushButton {
-                background-color: rgb(213, 232, 212);
-                border: 2px solid rgb(130, 179, 102);
-                font-size: 20px;
-                padding: 20px 100px;
-                border-radius: 10px;
-            }
-        ''')
-        font_save_button = QFont('Arial', 16, QFont.Bold)
-        save_button.setFont(font_save_button)
-        save_button.clicked.connect(self.on_savebtn_click)
-        save_left_spacer = QSpacerItem(40, 1, QSizePolicy.Expanding, QSizePolicy.Minimum)
-        save_right_spacer = QSpacerItem(40, 1, QSizePolicy.Expanding, QSizePolicy.Minimum)
-        save_layout.addItem(save_left_spacer)
-        save_layout.addWidget(save_button)
-        save_layout.addItem(save_right_spacer)
+        self.controlGroupBox.layout.addWidget(self.crossHairGroup)
 
-        # Reset Button Widget
-        reset_button = QPushButton('Reset')
-        reset_button.setStyleSheet('''
-            QPushButton {
-                background-color: rgb(213, 232, 212);
-                border: 2px solid rgb(130, 179, 102);
-                font-size: 20px;
-                padding: 20px 100px;
-                border-radius: 10px;
-            }
-        ''')
-        font_reset_button = QFont('Arial', 16, QFont.Bold)
-        reset_button.setFont(font_reset_button)
-        reset_button.clicked.connect(self.on_resetbtn_click)
+        self.controlGroupBox.verticalSpacer_down = QSpacerItem(
+            20, 40, QSizePolicy.Minimum, QSizePolicy.Expanding)
+        self.controlGroupBox.layout.addItem(
+            self.controlGroupBox.verticalSpacer_down)
 
-        self.view_layout.addLayout(self.title_layout)
-        
-        self.setLayout(self.view_layout)
+        self.layout = QHBoxLayout(self)
 
-        self.first_layout = QVBoxLayout()
-        self.first_sub_layout = QHBoxLayout()
-        self.first_sub_layout.addLayout(self.form_layout)
-        self.first_sub_layout.addLayout(save_layout)
-        self.first_sub_layout.setStretch(0, 1)
-        self.first_sub_layout.setStretch(1, 1)
-        self.first_layout.addWidget(self.camera_widget)
-        self.first_layout.addLayout(self.first_sub_layout)
-        self.first_widget.setLayout(self.first_layout)
-        self.view_layout.addWidget(self.first_widget)
+        self.cameraWidget = CameraViewWidget(self)
+        # self.cameraWidget.openCamera(cameraIndexes[0])
 
-        self.second_layout = QHBoxLayout()
-        second_sub_layout = QVBoxLayout()
-        second_sub_layout.addItem(info_top_spacer)
-        second_sub_layout.addLayout(self.info_layout)
-        second_sub_layout.addItem(info_middle_spacer)
-        second_sub_layout.addWidget(reset_button)
-        second_sub_layout.addItem(info_bottom_spacer)
-        second_sub_layout.setContentsMargins(40, 0, 40, 0)
+        self.layout.addWidget(self.cameraWidget)
+        self.layout.addWidget(self.controlGroupBox)
+        self.layout.setStretch(0, 1)
 
-        self.second_layout.addLayout(second_sub_layout)
-        self.second_widget = QWidget()
-        self.second_widget.setLayout(self.second_layout)
-        self.view_layout.addWidget(self.second_widget)
+        self.cameraActions[0].trigger()
 
-        self.view_layout.setStretch(0, 0)
-        self.view_layout.setStretch(1, 1)
-        self.view_layout.setStretch(2, 1)
+        self.verticalLineGroup.checkBox.stateChanged.connect(self.resetVerticalLineValue)
+        self.verticalLineGroup.xEdit.textChanged.connect(self.resetVerticalLineValue)
 
-        self.second_widget.hide()
-        self.camera_widget.next_btn.hide()
+        self.horinzontalLineGroup.checkBox.stateChanged.connect(self.resetHorizontalValue)
+        self.horinzontalLineGroup.yEdit.textChanged.connect(self.resetHorizontalValue)
 
-    def clear_view_layout(self):
-        print('clear')
+        self.crossHairGroup.checkBox.stateChanged.connect(self.resetCrossHairValue)
+        self.crossHairGroup.xEdit.textChanged.connect(self.resetCrossHairValue)
+        self.crossHairGroup.yEdit.textChanged.connect(self.resetCrossHairValue)
 
-    def on_savebtn_click(self):
-        global measure_idx
-        measure_idx = 0
-        show_one_camera(measure_idx)
-        self.first_layout.removeWidget(self.camera_widget)
-        self.second_layout.insertWidget(0, self.camera_widget)
-        self.first_widget.hide()
-        self.second_widget.show()
-        self.title_label.setText('Measurement')
+        self.resetVerticalLineValue()
+        self.resetHorizontalValue()
+        self.resetCrossHairValue()
 
-        self.second_layout.setStretch(0, 1)
-        self.second_layout.setStretch(1, 0)
-        self.camera_widget.next_btn.show()
+    def cameraMenuTriggered(self):
+        self.cameraWidget.closeCamera()
+        for index, cameraAction in enumerate(self.cameraActions) :
+            if (cameraAction.isChecked()) :
+                self.cameraWidget.openCamera(cameraAction.index)
 
-    def on_resetbtn_click(self):
-        self.second_layout.removeWidget(self.camera_widget)
-        self.first_layout.insertWidget(0, self.camera_widget)
-        self.second_widget.hide()
-        self.first_widget.show()
-        show_one_camera(-1)
-        self.title_label.setText('View camera')
-        self.camera_widget.next_btn.hide()
-    def display_measurement(self, width=35, height=25, length=135):
-        self.value_labels[0].setText(str(width))
-        self.value_labels[1].setText(str(height))
-        self.value_labels[2].setText(str(length))
+    def resetVerticalLineValue(self) :
+        value = -1
+        if self.verticalLineGroup.checkBox.isChecked() :
+            try :
+                value = int(self.verticalLineGroup.xEdit.text())
+            except ValueError:
+                value = -1
+            self.verticalLineGroup.xEdit.setEnabled(True)
+        else:
+            self.verticalLineGroup.xEdit.setEnabled(False)
+        self.cameraWidget.verticalLine = value
+
+    def resetHorizontalValue(self) :
+        value = -1
+        if self.horinzontalLineGroup.checkBox.isChecked() :
+            try :
+                value = int(self.horinzontalLineGroup.yEdit.text())
+            except ValueError:
+                value = -1
+            self.horinzontalLineGroup.yEdit.setEnabled(True)
+        else:
+            self.horinzontalLineGroup.yEdit.setEnabled(False)
+        self.cameraWidget.horizontalLine = value
+
+    def resetCrossHairValue(self) :
+        xValue = -1
+        yValue = -1
+        if self.crossHairGroup.checkBox.isChecked() :
+            try :
+                xValue = int(self.crossHairGroup.xEdit.text())
+            except ValueError:
+                xValue = -1
+            try :
+                yValue = int(self.crossHairGroup.yEdit.text())
+            except ValueError:
+                yValue = -1
+            self.crossHairGroup.xEdit.setEnabled(True)
+            self.crossHairGroup.yEdit.setEnabled(True)
+        else:
+            self.crossHairGroup.xEdit.setEnabled(False)
+            self.crossHairGroup.yEdit.setEnabled(False)
+        self.cameraWidget.crossHair["x"] = xValue
+        self.cameraWidget.crossHair["y"] = yValue
 
 def main():
+    global cameraIndexes
+    for camera_index in range(3):
+        cap = cv2.VideoCapture(camera_index)
+        if cap.isOpened():
+            cameraIndexes.append(camera_index)
+            cap.release()
+    if len(cameraIndexes) == 0:
+        cameraIndexes = [0]
+
     app = QApplication(sys.argv)
-    main_widget = MainWidget()
+    main_widget = MainWiget()
+    main_widget.resize(700, 500)
     main_widget.show()
     sys.exit(app.exec())
+
 
 if __name__ == '__main__':
     main()
